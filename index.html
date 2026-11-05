@@ -1,0 +1,142 @@
+<!DOCTYPE html><html lang="ar"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<style>
+body{margin:0;overflow:hidden;background:#000;font-family:sans-serif;touch-action:none;user-select:none}
+canvas{display:block}
+#hud{position:fixed;top:6px;width:100%;text-align:center;color:#fff;font-size:18px;text-shadow:0 0 4px #000;pointer-events:none}
+#msg{position:fixed;top:40%;width:100%;text-align:center;color:#ff0;font-size:44px;text-shadow:0 0 6px #000;pointer-events:none}
+#menu{position:fixed;inset:0;background:#0b3d1fee;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;direction:rtl;overflow:auto}
+select,button{font-size:17px;padding:7px;border-radius:8px;min-width:160px}
+.b{position:fixed;width:68px;height:68px;border-radius:50%;background:#fff4;border:2px solid #fff;color:#fff;font-size:15px;min-width:0;padding:0}
+#joy{position:fixed;left:20px;bottom:20px;width:130px;height:130px;border-radius:50%;background:#fff3;border:2px solid #fff6}
+#knob{position:absolute;left:45px;top:45px;width:40px;height:40px;border-radius:50%;background:#fffa}
+</style></head><body>
+<div id="hud"></div><div id="msg"></div>
+<div id="joy"><div id="knob"></div></div>
+<div id="menu"><h2>⚽ كرة القدم 3D</h2>
+فريقك <select id="ta"></select>الخصم <select id="tb"></select>
+خطتك <select id="fa"></select>خطة الخصم <select id="fb"></select>
+مدة المباراة <select id="du"><option value="1">1 دقيقة</option><option value="3" selected>3 دقائق</option><option value="5">5 دقائق</option><option value="10">10 دقائق</option></select>
+<button onclick="start()">ابدأ المباراة</button><div id="res"></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const $=id=>document.getElementById(id),R=Math.random,cl=(v,a,b)=>Math.max(a,Math.min(b,v));
+// ===== عدّل الفرق واللاعبين هنا: p:['اسم1','اسم2',...] (11 اسم، الأول حارس) =====
+const TEAMS=[
+{n:'ريال مدريد',c:0xffffff},{n:'برشلونة',c:0xa50044},{n:'مانشستر سيتي',c:0x6cabdd},{n:'ليفربول',c:0xc8102e},
+{n:'بايرن ميونخ',c:0xdc052d},{n:'يوفنتوس',c:0xeeeeee},{n:'ميلان',c:0xfb090b},{n:'باريس',c:0x004170},
+{n:'الهلال',c:0x0055aa},{n:'النصر',c:0xf5c400},{n:'الأهلي',c:0x008000},{n:'العراق',c:0x007a3d},
+{n:'السعودية',c:0x006c35},{n:'البرازيل',c:0xffdf00},{n:'الأرجنتين',c:0x75aadb},{n:'فرنسا',c:0x1d3f8f}];
+const FORM={
+'4-4-2':[[.2,.1],[.2,.37],[.2,.63],[.2,.9],[.5,.1],[.5,.37],[.5,.63],[.5,.9],[.8,.35],[.8,.65]],
+'4-3-3':[[.2,.1],[.2,.37],[.2,.63],[.2,.9],[.5,.25],[.5,.5],[.5,.75],[.8,.15],[.85,.5],[.8,.85]],
+'3-5-2':[[.2,.2],[.2,.5],[.2,.8],[.5,.05],[.45,.3],[.5,.5],[.45,.7],[.5,.95],[.8,.35],[.8,.65]],
+'4-2-3-1':[[.2,.1],[.2,.37],[.2,.63],[.2,.9],[.42,.35],[.42,.65],[.62,.15],[.65,.5],[.62,.85],[.85,.5]],
+'5-3-2':[[.2,.05],[.2,.28],[.2,.5],[.2,.72],[.2,.95],[.5,.25],[.5,.5],[.5,.75],[.8,.35],[.8,.65]]};
+TEAMS.forEach((t,i)=>{[ 'ta','tb'].forEach(s=>$(s).add(new Option(t.n,i)))});
+Object.keys(FORM).forEach(f=>['fa','fb'].forEach(s=>$(s).add(new Option(f,f))));
+$('tb').value=1;
+
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x87ceeb);
+const cam=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,.1,300);
+const ren=new THREE.WebGLRenderer({antialias:true});ren.setSize(innerWidth,innerHeight);document.body.prepend(ren.domElement);
+addEventListener('resize',()=>{ren.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()});
+scene.add(new THREE.AmbientLight(0xffffff,.8));const sun=new THREE.DirectionalLight(0xffffff,.6);sun.position.set(20,50,20);scene.add(sun);
+// الملعب
+const cv=document.createElement('canvas');cv.width=1100;cv.height=700;const g=cv.getContext('2d');
+for(let i=0;i<11;i++){g.fillStyle=i%2?'#2e8b3a':'#339942';g.fillRect(i*100,0,100,700)}
+g.strokeStyle='#fff';g.lineWidth=4;g.strokeRect(30,10,1040,680);g.strokeRect(30,150,165,400);g.strokeRect(905,150,165,400);
+g.strokeRect(30,255,55,190);g.strokeRect(1015,255,55,190);g.beginPath();g.moveTo(550,10);g.lineTo(550,690);g.stroke();
+g.beginPath();g.arc(550,350,91,0,6.29);g.stroke();
+const pitch=new THREE.Mesh(new THREE.PlaneGeometry(110,70),new THREE.MeshLambertMaterial({map:new THREE.CanvasTexture(cv)}));
+pitch.rotation.x=-Math.PI/2;scene.add(pitch);
+const wm=new THREE.MeshLambertMaterial({color:0xffffff});
+for(const s of[-1,1]){[[0,1.2,-3.7,.2,2.4,.2],[0,1.2,3.7,.2,2.4,.2],[0,2.4,0,.2,.2,7.6]].forEach(a=>{const m=new THREE.Mesh(new THREE.BoxGeometry(a[3],a[4],a[5]),wm);m.position.set(s*52+(a[0]),a[1],a[2]);scene.add(m)})}
+const bm=new THREE.Mesh(new THREE.SphereGeometry(.3,16,16),new THREE.MeshLambertMaterial({color:0xffffff}));scene.add(bm);
+const ring=new THREE.Mesh(new THREE.RingGeometry(.8,1,24),new THREE.MeshBasicMaterial({color:0xffff00,side:2}));ring.rotation.x=-Math.PI/2;scene.add(ring);
+
+let pl=[],own=null,G={},ball={x:0,y:.3,z:0,vx:0,vy:0,vz:0},K={x:0,z:0},names=['',''];
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.z-b.z);
+function setOwn(p){own=p;p.hold=0;G.tcd=.6;G.alt=false;ball.vx=ball.vy=ball.vz=0}
+function kick(p,tx,tz,v,lift){const dx=tx-p.x,dz=tz-p.z,d=Math.hypot(dx,dz)||1;ball.x=p.x+dx/d*.8;ball.z=p.z+dz/d*.8;ball.vx=dx/d*v;ball.vz=dz/d*v;ball.vy=lift;ball.y=.35;own=null;G.lk=p;G.lkt=.4}
+function pass(p,ux,uz){let b=null,bs=-1e9;for(const m of pl){if(m.t!=p.t||m===p||(m.gk&&p.gk))continue;const dx=m.x-p.x,dz=m.z-p.z,d=Math.hypot(dx,dz);if(d<4)continue;const s=(dx*ux+dz*uz)/d*25-d*.25;if(s>bs){bs=s;b=m}}
+ if(b){const d=dist(p,b);kick(p,b.x+b.vx*.5,b.z+b.vz*.5,Math.min(34,d*.85+6),0)}else kick(p,p.x+ux*20,p.z+uz*20,18,0)}
+function shoot(p){const gx=(p.t?-1:1)*52;kick(p,gx,(R()-.5)*5,30+R()*4,3+R()*3)}
+
+function start(){
+ pl.forEach(p=>scene.remove(p.m));pl=[];
+ const a=TEAMS[+$('ta').value],b=TEAMS[+$('tb').value],f=[FORM[$('fa').value],FORM[$('fb').value]];
+ const cols=[a.c,b.c==a.c?0x222222:b.c];names=[a.n,b.n];
+ [a,b].forEach((tm,t)=>{[[.03,.5,1],...f[t].map(x=>[x[0],x[1],0])].forEach((d,i)=>{
+  const m=new THREE.Group();
+  const bd=new THREE.Mesh(new THREE.CylinderGeometry(.45,.45,1.4,10),new THREE.MeshLambertMaterial({color:d[2]?0x22cc22:cols[t]}));bd.position.y=.7;
+  const hd=new THREE.Mesh(new THREE.SphereGeometry(.3,10,10),new THREE.MeshLambertMaterial({color:0xf1c27d}));hd.position.y=1.65;
+  m.add(bd,hd);scene.add(m);
+  pl.push({m,t,i,fx:d[0],fz:d[1],gk:d[2],x:0,z:0,vx:0,vz:0,dx:t?-1:1,dz:0,hold:0,name:(tm.p&&tm.p[i])||('لاعب '+(i+1))})})});
+ G={score:[0,0],time:0,dur:+$('du').value,run:true,half:0,freeze:0,pend:null,lk:null,lkt:0,tcd:0,alt:false};
+ $('menu').style.display='none';kickoff(0)}
+function kickoff(t){G.freeze=1;for(const p of pl){const d=p.t?-1:1,fx=Math.min(p.fx,.46);p.x=d*(-52+fx*104);p.z=(p.fz-.5)*60;p.vx=p.vz=0;p.dx=d;p.dz=0}
+ const s=pl.filter(p=>p.t==t&&!p.gk).pop();s.x=0;s.z=0;ball.x=0;ball.z=0;ball.y=.3;G.lk=null;setOwn(s)}
+function end(){G.run=false;$('menu').style.display='flex';$('res').textContent=`النتيجة النهائية: ${names[0]} ${G.score[0]} - ${G.score[1]} ${names[1]}`}
+
+function upd(dt){
+ G.tcd-=dt;
+ if(G.freeze>0){G.freeze-=dt;if(G.freeze<=0){$('msg').textContent='';if(G.pend!=null){const t=G.pend;G.pend=null;kickoff(t)}}return}
+ G.time+=dt;const tot=G.dur*60;
+ if(!G.half&&G.time>=tot/2){G.half=1;$('msg').textContent='الشوط الثاني';G.pend=1;G.freeze=2.5;return}
+ if(G.time>=tot){end();return}
+ let c=null;
+ if(own&&own.t==0&&!own.gk)c=own;else{
+  if(K.sw){K.sw=0;G.alt=!G.alt}
+  const cand=pl.filter(p=>p.t==0&&!p.gk).sort((a,b)=>dist(a,ball)-dist(b,ball));c=cand[G.alt?1:0]}
+ const ch=[null,null];
+ for(let t=0;t<2;t++){let b=1e9;for(const p of pl)if(p.t==t&&!p.gk&&p!==c&&dist(p,ball)<b){b=dist(p,ball);ch[t]=p}}
+ for(const p of pl){
+  const dir=p.t?-1:1;let tx=p.x,tz=p.z,sp=7.5;
+  if(p===c){if(Math.hypot(K.x,K.z)>.15){tx=p.x+K.x*10;tz=p.z+K.z*10;sp=K.sp?11:8.5}}
+  else if(own===p){p.hold+=dt;const gx=dir*52,dg=Math.hypot(gx-p.x,p.z);let near=1e9;
+   for(const o of pl)if(o.t!=p.t)near=Math.min(near,dist(o,p));
+   if(p.gk){sp=0;if(p.hold>.8)pass(p,dir,0)}
+   else if(dg<26&&p.hold>.25)shoot(p);
+   else if(near<3.2&&p.hold>.4)pass(p,dir,0);
+   else{tx=gx;tz=p.z*.7}}
+  else if(p.gk){tx=-dir*49.5;tz=cl(ball.z*.3,-5,5);sp=7}
+  else if(p===ch[p.t]&&(!own||own.t!=p.t)){tx=ball.x;tz=ball.z;sp=8.5}
+  else{const bx=dir*(-52+p.fx*104);tx=cl(bx+(own&&own.t==p.t?dir*8:-dir*3)+ball.x*.3,-50,50);tz=(p.fz-.5)*60+ball.z*.25}
+  const dx=tx-p.x,dz=tz-p.z,d=Math.hypot(dx,dz);let vx=0,vz=0;if(d>.4&&sp){vx=dx/d*sp;vz=dz/d*sp}
+  const k=Math.min(1,dt*8);p.vx+=(vx-p.vx)*k;p.vz+=(vz-p.vz)*k;
+  p.x=cl(p.x+p.vx*dt,-54,54);p.z=cl(p.z+p.vz*dt,-34,34);
+  const s=Math.hypot(p.vx,p.vz);if(s>.8){p.dx=p.vx/s;p.dz=p.vz/s}
+  p.m.position.set(p.x,0,p.z);p.m.rotation.y=Math.atan2(p.dx,p.dz)}
+ // أفعال اللاعب
+ const hasJ=Math.hypot(K.x,K.z)>.15,ux=hasJ?K.x:c.dx,uz=hasJ?K.z:c.dz;
+ if(own===c){if(K.pass){K.pass=0;pass(c,ux,uz)}else if(K.shoot){K.shoot=0;shoot(c)}}
+ else if(K.pass||K.shoot){if(dist(c,ball)<1.8)kick(c,c.x+c.dx*10,c.z+c.dz*10,K.shoot?28:16,K.shoot?3:0);K.pass=K.shoot=0}
+ // الكرة
+ if(own){ball.x=own.x+own.dx*.9;ball.z=own.z+own.dz*.9;ball.y=.3;
+  if(G.tcd<=0)for(const o of pl)if(o.t!=own.t&&!o.gk&&dist(o,own)<1.2&&((o===c&&K.tack)||(o.t==1&&R()<dt*1.5))){setOwn(o);break}}
+ else{ball.vy-=25*dt;ball.x+=ball.vx*dt;ball.y+=ball.vy*dt;ball.z+=ball.vz*dt;
+  if(ball.y<.3){ball.y=.3;ball.vy=Math.abs(ball.vy)>3?-ball.vy*.5:0}
+  if(ball.y<=.31){const f=Math.exp(-.7*dt);ball.vx*=f;ball.vz*=f}
+  if(G.lkt>0)G.lkt-=dt;
+  if(ball.y<1.3)for(const p of pl){if(p===G.lk&&G.lkt>0)continue;if(dist(p,ball)<(p.gk?1.8:1.1)){setOwn(p);break}}
+  if(Math.abs(ball.z)>34){ball.z=Math.sign(ball.z)*33.5;ball.vx=ball.vz=0}
+  if(Math.abs(ball.x)>52){const s=Math.sign(ball.x);
+   if(Math.abs(ball.z)<3.7&&ball.y<2.4){const w=s>0?0:1;G.score[w]++;$('msg').textContent='⚽ هــدف!';G.freeze=2.5;G.pend=1-w;ball.vx=ball.vz=0}
+   else{ball.x=s*51.5;ball.vx*=-.4}}}
+ bm.position.set(ball.x,ball.y,ball.z);ring.position.set(c.x,.05,c.z);
+ $('hud').textContent=`${names[0]} ${G.score[0]} - ${G.score[1]} ${names[1]}  ⏱ ${Math.floor(G.time/tot*90)}'  |  ${c.name}`}
+
+let last=performance.now();
+(function L(n){requestAnimationFrame(L);const dt=Math.min(.05,(n-last)/1e3);last=n;if(G.run)upd(dt);
+ cam.position.set(ball.x*.85,30,38);cam.lookAt(ball.x*.85,0,2);ren.render(scene,cam)})(last);
+
+// التحكم
+const joy=$('joy'),kn=$('knob');
+function jm(e){const r=joy.getBoundingClientRect();let x=(e.clientX-r.left-65)/50,z=(e.clientY-r.top-65)/50,l=Math.hypot(x,z);if(l>1){x/=l;z/=l}K.x=x;K.z=z;kn.style.transform=`translate(${x*40}px,${z*40}px)`}
+joy.onpointerdown=e=>{joy.setPointerCapture(e.pointerId);jm(e)};joy.onpointermove=e=>{if(e.buttons)jm(e)};
+joy.onpointerup=joy.onpointercancel=()=>{K.x=K.z=0;kn.style.transform=''};
+function B(id,t,r,b,hold){const e=document.createElement('button');e.className='b';e.textContent=t;e.style.right=r+'px';e.style.bottom=b+'px';
+ e.onpointerdown=ev=>{ev.preventDefault();K[id]=1};if(hold)e.onpointerup=e.onpointercancel=()=>K[id]=0;document.body.appendChild(e)}
+B('shoot','تسديد',20,110);B('pass','تمرير',105,40);B('tack','قطع',20,25,1);B('sp','جري',190,40,1);B('sw','تبديل',105,125);
+</script></body></html>
